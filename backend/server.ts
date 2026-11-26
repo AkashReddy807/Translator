@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express, { type Request, type Response } from 'express';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { translateRouter } from './routes/translateRoutes.ts';
@@ -8,10 +9,46 @@ import { ttsRouter } from './routes/ttsRoutes.ts';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = 3000;
+const DEFAULT_PORT = Number(process.env.PORT) || 3000;
+const MAX_PORT_RETRIES = 20;
+
+function listenWithFallback(
+  server: http.Server,
+  initialPort: number,
+  maxRetries = MAX_PORT_RETRIES
+) {
+  return new Promise<number>((resolve, reject) => {
+    let attempt = 0;
+    let currentPort = initialPort;
+
+    const onListening = () => {
+      server.off('error', onError);
+      console.log(`Server listening on http://localhost:${currentPort}`);
+      resolve(currentPort);
+    };
+
+    const onError = (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE' && attempt < maxRetries) {
+        attempt += 1;
+        const nextPort = currentPort + 1;
+        console.warn(`Port ${currentPort} is already in use, trying port ${nextPort}...`);
+        currentPort = nextPort;
+        server.listen(currentPort, '0.0.0.0');
+        return;
+      }
+      server.off('listening', onListening);
+      reject(err);
+    };
+
+    server.once('listening', onListening);
+    server.on('error', onError);
+    server.listen(currentPort, '0.0.0.0');
+  });
+}
 
 export async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
@@ -24,7 +61,11 @@ export async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        allowedHosts: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -36,9 +77,13 @@ export async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening on http://0.0.0.0:${PORT}`);
-  });
+  await listenWithFallback(httpServer, DEFAULT_PORT);
+
+  const shutdown = () => {
+    httpServer.close(() => process.exit(0));
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 }
 
 startServer().catch((err) => {
