@@ -1,27 +1,24 @@
 import React, { useMemo, useRef, useState } from 'react';
-import type { User } from 'firebase/auth';
 import { ArrowUpRight, Loader2, Search, Trash2, Volume2 } from 'lucide-react';
 import { synthesizeSpeech } from '../services/apiService';
-import { deleteTranslationRecord } from '../services/firestoreService';
 import type { TargetLanguage, TranslationRecord } from '../types';
 
 interface HistoryViewProps {
-  user: User | null;
   records: TranslationRecord[];
   loading: boolean;
-  onRequireSignIn: () => void;
+  onDeleteRecord: (id: string) => Promise<void>;
   onReuseSentence: (text: string, targetLanguage: TargetLanguage) => void;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
-  user,
   records,
   loading,
-  onRequireSignIn,
+  onDeleteRecord,
   onReuseSentence,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -64,31 +61,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
   const handleDelete = async (id: string) => {
     setError(null);
+    setDeletingId(id);
     try {
-      await deleteTranslationRecord(id);
+      await onDeleteRecord(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete translation record.');
+    } finally {
+      setDeletingId(null);
     }
   };
-
-  if (!user) {
-    return (
-      <div className="bg-white border border-slate-200 rounded-xl p-10 text-center space-y-4">
-        <h1 className="text-xl font-semibold text-slate-900">Saved Translations</h1>
-        <p className="text-sm text-slate-600 max-w-md mx-auto">
-          Sign in with Google to store and review your English to Telugu and Gondi translations in
-          Firebase Firestore.
-        </p>
-        <button
-          type="button"
-          onClick={onRequireSignIn}
-          className="px-5 py-2.5 text-sm font-medium text-white bg-[#0F5257] rounded-lg hover:bg-[#0B3E42] transition-colors"
-        >
-          Sign in with Google
-        </button>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -137,8 +118,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 : 'No saved translations match your search'}
             </p>
             <p className="text-xs text-slate-500">
-              Translate text in Telugu or Gondi mode and click Save to History to store it in
-              Firestore.
+              Translate text in Telugu or Gondi mode and click Save to History to store it in your
+              workspace.
             </p>
           </div>
         )}
@@ -146,8 +127,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         {!loading && filtered.length > 0 && (
           <div className="divide-y divide-slate-200">
             {filtered.map((rec) => {
-              const timestampStr = rec.createdAt?.toDate
-                ? rec.createdAt.toDate().toLocaleString()
+              const timestampStr = rec.createdAt
+                ? new Date(rec.createdAt).toLocaleString()
                 : 'Just now';
 
               return (
@@ -197,7 +178,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         type="button"
                         onClick={() => handleListen(rec)}
                         disabled={playingId !== null}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap cursor-pointer"
                       >
                         {playingId === rec.id ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -209,7 +190,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <button
                         type="button"
                         onClick={() => onReuseSentence(rec.englishText, rec.targetLanguage)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 whitespace-nowrap"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 whitespace-nowrap cursor-pointer"
                       >
                         <ArrowUpRight className="w-3.5 h-3.5" />
                         Reuse
@@ -217,7 +198,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleDelete(rec.id)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-red-700 bg-white border border-slate-200 rounded-md hover:bg-red-50 whitespace-nowrap"
+                        disabled={deletingId === rec.id}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-red-700 bg-white border border-slate-200 rounded-md hover:bg-red-50 disabled:opacity-50 whitespace-nowrap cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                         Delete

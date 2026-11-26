@@ -3,7 +3,11 @@ import express, { type Request, type Response } from 'express';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getDatabase } from './database.ts';
+import { requireAuth } from './middleware/authMiddleware.ts';
+import { authRouter } from './routes/authRoutes.ts';
 import { translateRouter } from './routes/translateRoutes.ts';
+import { translationRouter } from './routes/translationRoutes.ts';
 import { ttsRouter } from './routes/ttsRoutes.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,7 +27,7 @@ function listenWithFallback(
 
     const onListening = () => {
       server.off('error', onError);
-      console.log(`Server listening on http://localhost:${currentPort}`);
+      console.log(`VaniGondi server running at http://localhost:${currentPort}`);
       resolve(currentPort);
     };
 
@@ -47,14 +51,24 @@ function listenWithFallback(
 }
 
 export async function startServer() {
+  // Initialize SQLite database (database/vanigondi.db) and seed catalog tables
+  getDatabase();
+
   const app = express();
   const httpServer = http.createServer(app);
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
-    res.json({ ok: true });
+    res.json({ ok: true, database: 'sqlite' });
   });
 
+  // Public auth endpoints (register, login, logout) + /auth/me (authenticated)
+  app.use('/api', authRouter);
+
+  // Authenticated per-user workspace endpoints
+  app.use('/api', translationRouter);
+  app.use('/api/translate', requireAuth);
+  app.use('/api/tts', requireAuth);
   app.use('/api', translateRouter);
   app.use('/api', ttsRouter);
 

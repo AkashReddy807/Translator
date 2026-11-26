@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { User } from 'firebase/auth';
 import {
   BookmarkCheck,
   BookmarkPlus,
@@ -9,22 +8,25 @@ import {
   Square,
   Volume2,
 } from 'lucide-react';
-import { synthesizeSpeech, translateText } from '../services/apiService';
-import { saveTranslationRecord } from '../services/firestoreService';
+import {
+  saveTranslationRecord,
+  synthesizeSpeech,
+  translateText,
+} from '../services/apiService';
 import {
   BLUEPRINT_LIMITS,
   type AutoSpeakMode,
   type TargetLanguage,
   type TranslationApiResult,
+  type TranslationRecord,
   type TranslatorMode,
   type VoiceName,
 } from '../types';
 
 interface TranslatorViewProps {
-  user: User | null;
   initialPrompt?: { text: string; targetLanguage: TargetLanguage } | null;
   onClearInitialPrompt?: () => void;
-  onRequireSignIn: () => void;
+  onRecordsSaved?: (records: TranslationRecord[]) => void;
 }
 
 const MAX_GONDI_WORDS = BLUEPRINT_LIMITS.gondiMaxWords;
@@ -70,10 +72,9 @@ function clampToMaxWords(text: string, maxWords: number): string {
 }
 
 export const TranslatorView: React.FC<TranslatorViewProps> = ({
-  user,
   initialPrompt,
   onClearInitialPrompt,
-  onRequireSignIn,
+  onRecordsSaved,
 }) => {
   const [mode, setMode] = useState<TranslatorMode>('both');
   const [englishText, setEnglishText] = useState('');
@@ -310,35 +311,35 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
   };
 
   const handleSave = async () => {
-    if (!user) {
-      onRequireSignIn();
-      return;
-    }
     if (!result) return;
 
     setSaving(true);
     setError(null);
     try {
       const cleanEnglish = englishText.trim();
+      const newlySaved: TranslationRecord[] = [];
       if (result.teluguText) {
-        await saveTranslationRecord(user, {
+        const rec = await saveTranslationRecord({
           targetLanguage: 'telugu',
           englishText: cleanEnglish,
           translatedText: result.teluguText,
           secondaryText: result.teluguRomanized ?? '',
         });
+        newlySaved.push(rec);
       }
       if (result.gondiText) {
-        await saveTranslationRecord(user, {
+        const rec = await saveTranslationRecord({
           targetLanguage: 'gondi',
           englishText: cleanEnglish,
           translatedText: result.gondiText,
           secondaryText: result.gondiScript ?? '',
         });
+        newlySaved.push(rec);
       }
+      onRecordsSaved?.(newlySaved);
       setSaved(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save translation to Firestore.');
+      setError(err instanceof Error ? err.message : 'Could not save translation.');
     } finally {
       setSaving(false);
     }
@@ -718,7 +719,7 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
                 ) : (
                   <BookmarkPlus className="w-3.5 h-3.5" />
                 )}
-                {saved ? 'Saved to Firestore' : saving ? 'Saving...' : 'Save to History'}
+                {saved ? 'Saved to History' : saving ? 'Saving...' : 'Save to History'}
               </button>
             </div>
           </div>

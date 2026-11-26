@@ -1,6 +1,3 @@
-import type { Timestamp } from 'firebase/firestore';
-
-export type UserRole = 'contributor' | 'reviewer' | 'admin';
 export type TargetLanguage = 'telugu' | 'gondi';
 export type TranslatorMode = 'both' | 'telugu' | 'gondi';
 export type VoiceName = 'Kore' | 'Puck' | 'Charon' | 'Zephyr';
@@ -17,11 +14,10 @@ export const BLUEPRINT_LIMITS = {
 } as const;
 
 export interface UserProfile {
-  uid: string;
-  displayName: string;
+  id: string;
+  name: string;
   email: string;
-  role: UserRole;
-  createdAt?: Timestamp | null;
+  createdAt: string;
 }
 
 export interface TranslationRecord {
@@ -31,7 +27,7 @@ export interface TranslationRecord {
   englishText: string;
   translatedText: string;
   secondaryText: string;
-  createdAt?: Timestamp | null;
+  createdAt: string;
 }
 
 export interface TranslationApiResult {
