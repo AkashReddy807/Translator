@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile for the Phase 1 English-to-Telugu and 100-word Gondi POC.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "role": {
+          "type": "string",
+          "enum": ["contributor", "reviewer", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "email", "role", "createdAt"]
+    },
+    "TranslationRecord": {
+      "title": "TranslationRecord",
+      "description": "Saved English-to-Telugu or English-to-Gondi (100-word pilot) translation record.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "targetLanguage": {
+          "type": "string",
+          "enum": ["telugu", "gondi"]
+        },
+        "englishText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "translatedText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        },
+        "secondaryText": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1200
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "targetLanguage",
+        "englishText",
+        "translatedText",
+        "secondaryText",
+        "createdAt"
+      ]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Marker document designating elevated admin privileges.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        }
+      },
+      "required": ["uid"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user account profiles isolated by owner UID or admin."
+    },
+    "/translations/{translationId}": {
+      "schema": { "$ref": "#/entities/TranslationRecord" },
+      "description": "Private English-to-Telugu and English-to-Gondi translation history."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Read-only admin role marker collection."
+    }
+  }
+}

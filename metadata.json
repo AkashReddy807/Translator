@@ -1,0 +1,8 @@
+{
+  "name": "VaniGondi — English to Telugu & Gondi Translator",
+  "description": "Proof-of-concept AI translation and community-validated parallel corpus platform for English to Telugu and Gondi language translation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
