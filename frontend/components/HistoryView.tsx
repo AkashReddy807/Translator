@@ -1,6 +1,11 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, Loader2, Search, Trash2, Volume2 } from 'lucide-react';
 import { synthesizeSpeech } from '../services/apiService';
+import {
+  isBrowserSpeechSupported,
+  speakWithBrowserVoice,
+  stopBrowserSpeech,
+} from '../services/speechService';
 import type { TargetLanguage, TranslationRecord } from '../types';
 
 interface HistoryViewProps {
@@ -34,25 +39,44 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   }, [records, searchQuery]);
 
   const handleListen = async (rec: TranslationRecord) => {
-    const textToSpeak =
-      rec.targetLanguage === 'gondi'
-        ? rec.secondaryText || rec.translatedText
-        : rec.translatedText;
-    if (!textToSpeak.trim()) return;
+    const scriptText =
+      rec.targetLanguage === 'gondi' ? rec.secondaryText : rec.translatedText;
+    const romanizedText =
+      rec.targetLanguage === 'gondi' ? rec.translatedText : rec.secondaryText;
+    const primaryText = scriptText.trim() || romanizedText.trim();
+    if (!primaryText) return;
 
     setError(null);
+    stopBrowserSpeech();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
     setPlayingId(rec.id);
     try {
-      const url = await synthesizeSpeech(textToSpeak, rec.targetLanguage);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = () => setPlayingId(null);
-      audio.onerror = () => setPlayingId(null);
-      await audio.play();
+      let audioUrl: string | null = null;
+      try {
+        audioUrl = await synthesizeSpeech(primaryText, rec.targetLanguage);
+      } catch (err) {
+        if (!isBrowserSpeechSupported()) {
+          throw err;
+        }
+      }
+
+      if (audioUrl) {
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+        audio.onended = () => setPlayingId(null);
+        audio.onerror = () => setPlayingId(null);
+        await audio.play();
+      } else {
+        await speakWithBrowserVoice({
+          scriptText,
+          romanizedText,
+          language: rec.targetLanguage,
+        });
+        setPlayingId(null);
+      }
     } catch (err) {
       setPlayingId(null);
       setError(err instanceof Error ? err.message : 'Audio playback failed.');

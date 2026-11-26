@@ -10,9 +10,15 @@ import {
 } from 'lucide-react';
 import {
   saveTranslationRecord,
+  SpeechQuotaError,
   synthesizeSpeech,
   translateText,
 } from '../services/apiService';
+import {
+  isBrowserSpeechSupported,
+  speakWithBrowserVoice,
+  stopBrowserSpeech,
+} from '../services/speechService';
 import {
   BLUEPRINT_LIMITS,
   type AutoSpeakMode,
@@ -98,6 +104,7 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCacheRef = useRef<Map<string, string>>(new Map());
   const sequenceCancelledRef = useRef<boolean>(false);
+  const geminiTtsQuotaReachedRef = useRef<boolean>(false);
 
   const includesGondi = mode === 'both' || mode === 'gondi';
   const includesTelugu = mode === 'both' || mode === 'telugu';
@@ -105,6 +112,7 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
 
   const stopVoiceAssistant = useCallback(() => {
     sequenceCancelledRef.current = true;
+    stopBrowserSpeech();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.onended = null;
@@ -135,46 +143,69 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
 
   const playLanguageAudio = useCallback(
     async (
-      textToSpeak: string,
+      scriptText: string,
+      romanizedText: string,
       language: TargetLanguage,
       selectedVoice: VoiceName,
       speed: number
     ): Promise<void> => {
-      const cleanText = textToSpeak.trim();
-      if (!cleanText) return;
+      const cleanScript = scriptText.trim();
+      const cleanRomanized = romanizedText.trim();
+      const primaryText = cleanScript || cleanRomanized;
+      if (!primaryText) return;
 
-      const cacheKey = `${language}:${selectedVoice}:${cleanText}`;
+      const cacheKey = `${language}:${selectedVoice}:${primaryText}`;
       setActiveSpeechLang(language);
       setTtsError(null);
 
       let audioUrl = audioCacheRef.current.get(cacheKey);
-      if (!audioUrl) {
+      if (!audioUrl && !geminiTtsQuotaReachedRef.current) {
         setAssistantPhase('loading');
-        audioUrl = await synthesizeSpeech(cleanText, language, selectedVoice);
-        audioCacheRef.current.set(cacheKey, audioUrl);
+        try {
+          audioUrl = await synthesizeSpeech(primaryText, language, selectedVoice);
+          audioCacheRef.current.set(cacheKey, audioUrl);
+        } catch (err) {
+          if (err instanceof SpeechQuotaError) {
+            geminiTtsQuotaReachedRef.current = true;
+          }
+          if (!isBrowserSpeechSupported()) {
+            throw err;
+          }
+        }
       }
 
       if (sequenceCancelledRef.current) return;
 
       setAssistantPhase('speaking');
-      await new Promise<void>((resolve, reject) => {
-        const audio = new Audio(audioUrl);
-        audio.playbackRate = speed;
-        audioRef.current = audio;
 
-        audio.onended = () => {
-          audioRef.current = null;
-          resolve();
-        };
-        audio.onerror = () => {
-          audioRef.current = null;
-          reject(new Error('Audio playback could not start in this browser.'));
-        };
+      if (audioUrl) {
+        await new Promise<void>((resolve, reject) => {
+          const audio = new Audio(audioUrl);
+          audio.playbackRate = speed;
+          audioRef.current = audio;
 
-        audio.play().catch((err) => {
-          audioRef.current = null;
-          reject(err instanceof Error ? err : new Error('Browser blocked audio playback.'));
+          audio.onended = () => {
+            audioRef.current = null;
+            resolve();
+          };
+          audio.onerror = () => {
+            audioRef.current = null;
+            reject(new Error('Audio playback could not start in this browser.'));
+          };
+
+          audio.play().catch((err) => {
+            audioRef.current = null;
+            reject(err instanceof Error ? err : new Error('Browser blocked audio playback.'));
+          });
         });
+        return;
+      }
+
+      await speakWithBrowserVoice({
+        scriptText: cleanScript,
+        romanizedText: cleanRomanized,
+        language,
+        speed,
       });
     },
     []
@@ -185,17 +216,17 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
       const target = sourceResult ?? result;
       if (!target) return;
 
-      const textToSpeak =
-        language === 'telugu'
-          ? target.teluguText ?? ''
-          : target.gondiScript || target.gondiText || '';
-      if (!textToSpeak.trim()) return;
+      const scriptText =
+        language === 'telugu' ? target.teluguText ?? '' : target.gondiScript ?? '';
+      const romanizedText =
+        language === 'telugu' ? target.teluguRomanized ?? '' : target.gondiText ?? '';
+      if (!scriptText.trim() && !romanizedText.trim()) return;
 
       stopVoiceAssistant();
       sequenceCancelledRef.current = false;
 
       try {
-        await playLanguageAudio(textToSpeak, language, voiceName, playbackSpeed);
+        await playLanguageAudio(scriptText, romanizedText, language, voiceName, playbackSpeed);
       } catch (err) {
         if (!sequenceCancelledRef.current) {
           setTtsError(err instanceof Error ? err.message : 'Speech synthesis failed.');
@@ -217,12 +248,23 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
 
       try {
         if (sourceResult.teluguText) {
-          await playLanguageAudio(sourceResult.teluguText, 'telugu', voiceName, playbackSpeed);
+          await playLanguageAudio(
+            sourceResult.teluguText,
+            sourceResult.teluguRomanized ?? '',
+            'telugu',
+            voiceName,
+            playbackSpeed
+          );
         }
         if (sequenceCancelledRef.current) return;
-        const gondiSpeak = sourceResult.gondiScript || sourceResult.gondiText || '';
-        if (gondiSpeak) {
-          await playLanguageAudio(gondiSpeak, 'gondi', voiceName, playbackSpeed);
+        if (sourceResult.gondiScript || sourceResult.gondiText) {
+          await playLanguageAudio(
+            sourceResult.gondiScript ?? '',
+            sourceResult.gondiText ?? '',
+            'gondi',
+            voiceName,
+            playbackSpeed
+          );
         }
       } catch (err) {
         if (!sequenceCancelledRef.current) {

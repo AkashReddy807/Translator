@@ -150,6 +150,14 @@ export async function translateText(
   return data as TranslationApiResult;
 }
 
+export class SpeechQuotaError extends Error {
+  quotaExceeded = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'SpeechQuotaError';
+  }
+}
+
 export async function synthesizeSpeech(
   text: string,
   language: TargetLanguage = 'telugu',
@@ -163,7 +171,12 @@ export async function synthesizeSpeech(
 
   const data = await parseJsonSafe(response);
   if (!response.ok) {
-    throw new Error(typeof data.error === 'string' ? data.error : 'Speech synthesis failed.');
+    const message =
+      typeof data.error === 'string' ? data.error : 'Speech synthesis failed.';
+    if (response.status === 429 || data.quotaExceeded === true) {
+      throw new SpeechQuotaError(message);
+    }
+    throw new Error(message);
   }
 
   return `data:${typeof data.mimeType === 'string' ? data.mimeType : 'audio/wav'};base64,${String(data.audioBase64 ?? '')}`;
