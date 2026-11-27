@@ -39,3 +39,9 @@ CREATE TABLE IF NOT EXISTS datasets (
   source_platform TEXT NOT NULL,
   benchmark_status TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS translation_cache (
+  cache_key TEXT PRIMARY KEY,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);

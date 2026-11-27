@@ -241,9 +241,9 @@ export function insertTranslation(
   const createdAt = new Date().toISOString();
 
   const targetLanguage: TargetLanguage = input.targetLanguage === 'gondi' ? 'gondi' : 'telugu';
-  const englishText = input.englishText.trim().slice(0, 1000);
-  const translatedText = input.translatedText.trim().slice(0, 1200);
-  const secondaryText = input.secondaryText.trim().slice(0, 1200);
+  const englishText = input.englishText.trim();
+  const translatedText = input.translatedText.trim();
+  const secondaryText = input.secondaryText.trim();
 
   if (!englishText || !translatedText) {
     throw new Error('English text and translated text are required.');
@@ -270,11 +270,9 @@ export function queryTranslations(options: {
   userId: string;
   search?: string;
   targetLanguage?: TargetLanguage | 'all';
-  limit?: number;
 }): TranslationRecord[] {
   if (!options.userId) return [];
   const db = getDatabase();
-  const limit = Math.max(1, Math.min(200, options.limit ?? 100));
   const search = options.search?.trim() ?? '';
   const targetLanguage = options.targetLanguage ?? 'all';
 
@@ -297,9 +295,7 @@ export function queryTranslations(options: {
     FROM translations
     WHERE ${conditions.join(' AND ')}
     ORDER BY created_at DESC
-    LIMIT ?
   `;
-  params.push(limit);
 
   const rows = db.prepare(sql).all(...params) as Array<{
     id: string;
@@ -329,6 +325,30 @@ export function deleteTranslationById(userId: string, id: string): boolean {
     .prepare('DELETE FROM translations WHERE id = ? AND user_id = ?')
     .run(id, userId);
   return Number(res.changes) > 0;
+}
+
+export function getCachedTranslation<T>(cacheKey: string): T | null {
+  const db = getDatabase();
+  const row = db
+    .prepare('SELECT result_json FROM translation_cache WHERE cache_key = ?')
+    .get(cacheKey) as { result_json: string } | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.result_json) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedTranslation(cacheKey: string, result: unknown): void {
+  const db = getDatabase();
+  db.prepare(
+    `INSERT INTO translation_cache (cache_key, result_json, created_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(cache_key) DO UPDATE SET
+       result_json = excluded.result_json,
+       created_at = excluded.created_at`
+  ).run(cacheKey, JSON.stringify(result), new Date().toISOString());
 }
 
 export function listDatasetsFromDb() {

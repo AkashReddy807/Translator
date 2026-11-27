@@ -18,12 +18,12 @@ translationRouter.get('/translations', (req: AuthenticatedRequest, res: Response
     return;
   }
 
-  const search = typeof req.query.search === 'string' ? req.query.search.slice(0, 200) : undefined;
+  const search = typeof req.query.search === 'string' ? req.query.search : undefined;
   const rawTarget = req.query.targetLanguage;
   const targetLanguage: TargetLanguage | 'all' =
     rawTarget === 'telugu' || rawTarget === 'gondi' ? rawTarget : 'all';
 
-  const records = queryTranslations({ userId, search, targetLanguage, limit: 100 });
+  const records = queryTranslations({ userId, search, targetLanguage });
   res.json({ records });
 });
 

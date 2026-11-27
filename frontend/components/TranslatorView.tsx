@@ -20,7 +20,6 @@ import {
   stopBrowserSpeech,
 } from '../services/speechService';
 import {
-  BLUEPRINT_LIMITS,
   type AutoSpeakMode,
   type TargetLanguage,
   type TranslationApiResult,
@@ -34,8 +33,6 @@ interface TranslatorViewProps {
   onClearInitialPrompt?: () => void;
   onRecordsSaved?: (records: TranslationRecord[]) => void;
 }
-
-const MAX_GONDI_WORDS = BLUEPRINT_LIMITS.gondiMaxWords;
 
 const SAMPLE_PROMPTS = [
   {
@@ -69,12 +66,6 @@ function countWords(text: string): number {
   const trimmed = text.trim();
   if (!trimmed) return 0;
   return trimmed.split(/\s+/).length;
-}
-
-function clampToMaxWords(text: string, maxWords: number): string {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return text;
-  return words.slice(0, maxWords).join(' ');
 }
 
 export const TranslatorView: React.FC<TranslatorViewProps> = ({
@@ -288,19 +279,11 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
     setError(null);
     setTtsError(null);
     setSaved(false);
-    if ((nextMode === 'gondi' || nextMode === 'both') && countWords(englishText) > MAX_GONDI_WORDS) {
-      setEnglishText(clampToMaxWords(englishText, MAX_GONDI_WORDS));
-    }
   };
 
   const handleInputChange = (value: string) => {
-    if (includesGondi && countWords(value) > MAX_GONDI_WORDS) {
-      setEnglishText(clampToMaxWords(value, MAX_GONDI_WORDS));
-      setError(`Input for Gondi translation is limited to up to ${MAX_GONDI_WORDS} words.`);
-      return;
-    }
     setError(null);
-    setEnglishText(value.slice(0, BLUEPRINT_LIMITS.translationEnglishMaxLength));
+    setEnglishText(value);
   };
 
   const handleTranslate = async (e?: React.FormEvent) => {
@@ -308,11 +291,6 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
     const trimmed = englishText.trim();
     if (!trimmed) {
       setError('Enter English text to translate.');
-      return;
-    }
-
-    if (includesGondi && countWords(trimmed) > MAX_GONDI_WORDS) {
-      setError(`English to Gondi supports up to ${MAX_GONDI_WORDS} words.`);
       return;
     }
 
@@ -443,19 +421,9 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
           <form onSubmit={handleTranslate} className="p-6 flex flex-col justify-between gap-5">
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs text-slate-500">
-                <span className="font-medium text-slate-700">
-                  {includesGondi ? 'English (Up to 100 words)' : 'English'}
-                </span>
-                <span
-                  className={`font-mono tabular-nums ${
-                    includesGondi && wordCount >= MAX_GONDI_WORDS
-                      ? 'text-amber-700 font-medium'
-                      : ''
-                  }`}
-                >
-                  {includesGondi
-                    ? `${wordCount} / ${MAX_GONDI_WORDS} words`
-                    : `${englishText.length}/${BLUEPRINT_LIMITS.translationEnglishMaxLength}`}
+                <span className="font-medium text-slate-700">English</span>
+                <span className="font-mono tabular-nums">
+                  {wordCount} {wordCount === 1 ? 'word' : 'words'}
                 </span>
               </div>
 
@@ -463,11 +431,7 @@ export const TranslatorView: React.FC<TranslatorViewProps> = ({
                 value={englishText}
                 onChange={(e) => handleInputChange(e.target.value)}
                 rows={7}
-                placeholder={
-                  includesGondi
-                    ? 'Enter English text (up to 100 words) to translate and speak aloud...'
-                    : 'Type English text to translate into Telugu...'
-                }
+                placeholder="Enter English text to translate and speak aloud..."
                 className="w-full resize-none rounded-lg border border-slate-200 bg-slate-50/50 p-4 text-base text-slate-900 placeholder:text-slate-400 focus:border-[#0F5257] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0F5257]/20 leading-relaxed"
               />
 

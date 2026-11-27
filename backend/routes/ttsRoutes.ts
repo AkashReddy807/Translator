@@ -3,17 +3,8 @@ import { createTtsAiClient, formatGeminiApiError } from '../services/geminiServi
 
 const ALLOWED_VOICES = new Set(['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr']);
 const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'] as const;
-const MAX_CACHE_ENTRIES = 100;
 
 const ttsAudioCache = new Map<string, string>();
-
-function setCachedAudio(key: string, base64: string) {
-  if (ttsAudioCache.size >= MAX_CACHE_ENTRIES) {
-    const oldestKey = ttsAudioCache.keys().next().value;
-    if (oldestKey) ttsAudioCache.delete(oldestKey);
-  }
-  ttsAudioCache.set(key, base64);
-}
 
 function isRateLimitError(error: unknown): boolean {
   const errObj = error as { status?: number; code?: number; message?: string };
@@ -30,9 +21,6 @@ ttsRouter.post('/tts', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Text is required for speech synthesis.' });
     }
     const cleanText = text.trim();
-    if (cleanText.length > 600) {
-      return res.status(400).json({ error: 'Speech text must be 600 characters or fewer.' });
-    }
 
     const safeLang = language === 'gondi' ? 'gondi' : 'telugu';
     const safeVoice =
@@ -82,7 +70,7 @@ ttsRouter.post('/tts', async (req: Request, res: Response) => {
 
         const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
         if (base64Audio) {
-          setCachedAudio(cacheKey, base64Audio);
+          ttsAudioCache.set(cacheKey, base64Audio);
           return res.json({
             audioBase64: base64Audio,
             mimeType: 'audio/wav',

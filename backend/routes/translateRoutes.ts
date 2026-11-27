@@ -1,14 +1,21 @@
+import crypto from 'crypto';
 import { Router, type Request, type Response } from 'express';
 import { Type } from '@google/genai';
 import { GONDI_LEXICON_100 } from '../../dataset/gondiLexicon100.ts';
+import { getCachedTranslation, setCachedTranslation } from '../database.ts';
 import { createTextAiClient, formatGeminiApiError } from '../services/geminiService.ts';
 
-const MAX_GONDI_WORDS = 100;
+const TRANSLATION_MODELS = ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'] as const;
 
-function countWords(text: string): number {
-  const trimmed = text.trim();
-  if (!trimmed) return 0;
-  return trimmed.split(/\s+/).length;
+function isRateLimitError(error: unknown): boolean {
+  const errObj = error as { status?: number; code?: number; message?: string };
+  const msg = String(errObj?.message ?? error ?? '');
+  return errObj?.status === 429 || errObj?.code === 429 || /429|RESOURCE_EXHAUSTED|quota/i.test(msg);
+}
+
+function makeCacheKey(mode: string, text: string): string {
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  return crypto.createHash('sha256').update(`${mode}:${normalized}`).digest('hex');
 }
 
 function getRelevantGondiLexiconHints(englishText: string): string {
@@ -24,10 +31,43 @@ function getRelevantGondiLexiconHints(englishText: string): string {
     if (!combined.some((m) => m.english === anchor.english)) {
       combined.push(anchor);
     }
-    if (combined.length >= 25) break;
+    if (combined.length >= 40) break;
   }
 
   return combined.map((e) => `${e.english} = ${e.gondi} (${e.gondiScript})`).join('; ');
+}
+
+async function generateWithModelFallback(
+  contents: string,
+  config: Record<string, unknown>
+): Promise<string> {
+  const ai = createTextAiClient();
+  let lastError: unknown = null;
+
+  for (const model of TRANSLATION_MODELS) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents,
+        config,
+      });
+      const rawText = (response.text ?? '').trim();
+      if (rawText) {
+        return rawText;
+      }
+    } catch (err) {
+      lastError = err;
+      if (isRateLimitError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error('Translation model returned an empty response.');
 }
 
 export const translateRouter = Router();
@@ -47,23 +87,16 @@ translateRouter.post('/translate', async (req: Request, res: Response) => {
     }
 
     const trimmed = englishText.trim();
-    if (trimmed.length > 1000) {
-      return res.status(400).json({ error: 'Input must be 1000 characters or fewer.' });
+    const cacheKey = makeCacheKey(mode, trimmed);
+    const cached = getCachedTranslation<Record<string, string>>(cacheKey);
+    if (cached) {
+      return res.json(cached);
     }
-
-    if ((mode === 'gondi' || mode === 'both') && countWords(trimmed) > MAX_GONDI_WORDS) {
-      return res.status(400).json({
-        error: `English to Gondi translation supports up to ${MAX_GONDI_WORDS} words per request.`,
-      });
-    }
-
-    const ai = createTextAiClient();
 
     if (mode === 'both') {
       const lexicalHints = getRelevantGondiLexiconHints(trimmed);
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
-        contents: [
+      const rawText = await generateWithModelFallback(
+        [
           `Reference Adilabad Gondi (Koyang) vocabulary: ${lexicalHints}`,
           '',
           'Translate the following English text into BOTH:',
@@ -72,7 +105,7 @@ translateRouter.post('/translate', async (req: Request, res: Response) => {
           '',
           `Source English: "${trimmed}"`,
         ].join('\n'),
-        config: {
+        {
           systemInstruction:
             'You are a computational linguistics English-to-Telugu and English-to-Gondi translator for Telangana/Andhra Pradesh Dravidian languages. Produce accurate Telugu in Telugu Unicode script with phonetic romanization, and natural Adilabad Gondi (Koyang) grounded in the provided vocabulary with Telugu-script pronunciation.',
           responseMimeType: 'application/json',
@@ -98,34 +131,30 @@ translateRouter.post('/translate', async (req: Request, res: Response) => {
             },
             required: ['teluguText', 'teluguRomanized', 'gondiText', 'gondiScript'],
           },
-        },
-      });
-
-      const rawText = (response.text ?? '').trim();
-      if (!rawText) {
-        return res.status(502).json({ error: 'Translation model returned an empty response.' });
-      }
+        }
+      );
 
       const parsed = JSON.parse(rawText);
-      return res.json({
-        teluguText: String(parsed.teluguText ?? '').slice(0, 1200),
-        teluguRomanized: String(parsed.teluguRomanized ?? '').slice(0, 1200),
-        gondiText: String(parsed.gondiText ?? '').slice(0, 1200),
-        gondiScript: String(parsed.gondiScript ?? '').slice(0, 1200),
-      });
+      const payload = {
+        teluguText: String(parsed.teluguText ?? ''),
+        teluguRomanized: String(parsed.teluguRomanized ?? ''),
+        gondiText: String(parsed.gondiText ?? ''),
+        gondiScript: String(parsed.gondiScript ?? ''),
+      };
+      setCachedTranslation(cacheKey, payload);
+      return res.json(payload);
     }
 
     if (mode === 'gondi') {
       const lexicalHints = getRelevantGondiLexiconHints(trimmed);
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
-        contents: [
+      const rawText = await generateWithModelFallback(
+        [
           `Reference Adilabad Gondi (Koyang) vocabulary: ${lexicalHints}`,
           '',
-          'Translate the following English text (up to 100 words) into natural Adilabad Gondi (Koyang dialect):',
+          'Translate the following English text into natural Adilabad Gondi (Koyang dialect):',
           `"${trimmed}"`,
         ].join('\n'),
-        config: {
+        {
           systemInstruction:
             'You are a computational linguistics English-to-Gondi translator focused on Telangana/Adilabad Gondi (Koyang, South-Central Dravidian). Use the provided Adilabad Gondi lexical entries accurately wherever applicable and produce natural Gondi grammar. Return clean readable Romanized Gondi in gondiText and phonetic Telugu-script Gondi in gondiScript.',
           responseMimeType: 'application/json',
@@ -143,26 +172,22 @@ translateRouter.post('/translate', async (req: Request, res: Response) => {
             },
             required: ['gondiText', 'gondiScript'],
           },
-        },
-      });
-
-      const rawText = (response.text ?? '').trim();
-      if (!rawText) {
-        return res.status(502).json({ error: 'Translation model returned an empty response.' });
-      }
+        }
+      );
 
       const parsed = JSON.parse(rawText);
-      return res.json({
-        gondiText: String(parsed.gondiText ?? '').slice(0, 1200),
-        gondiScript: String(parsed.gondiScript ?? '').slice(0, 1200),
-      });
+      const payload = {
+        gondiText: String(parsed.gondiText ?? ''),
+        gondiScript: String(parsed.gondiScript ?? ''),
+      };
+      setCachedTranslation(cacheKey, payload);
+      return res.json(payload);
     }
 
     // English -> Telugu only
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-lite',
-      contents: `Translate the following English text into natural, accurate Telugu:\n\n"${trimmed}"`,
-      config: {
+    const rawText = await generateWithModelFallback(
+      `Translate the following English text into natural, accurate Telugu:\n\n"${trimmed}"`,
+      {
         systemInstruction:
           'You are a precise English-to-Telugu neural translation engine. Return natural, grammatically accurate Telugu written in Telugu Unicode script in teluguText along with a clear phonetic Latin transliteration in teluguRomanized.',
         responseMimeType: 'application/json',
@@ -180,25 +205,22 @@ translateRouter.post('/translate', async (req: Request, res: Response) => {
           },
           required: ['teluguText', 'teluguRomanized'],
         },
-      },
-    });
-
-    const rawText = (response.text ?? '').trim();
-    if (!rawText) {
-      return res.status(502).json({ error: 'Translation model returned an empty response.' });
-    }
+      }
+    );
 
     const parsed = JSON.parse(rawText);
-    return res.json({
-      teluguText: String(parsed.teluguText ?? '').slice(0, 1200),
-      teluguRomanized: String(parsed.teluguRomanized ?? '').slice(0, 1200),
-    });
+    const payload = {
+      teluguText: String(parsed.teluguText ?? ''),
+      teluguRomanized: String(parsed.teluguRomanized ?? ''),
+    };
+    setCachedTranslation(cacheKey, payload);
+    return res.json(payload);
   } catch (error: unknown) {
     console.error('Translation API error:', error);
     const formatted = formatGeminiApiError(
       error,
       'Translation request failed.',
-      'Daily free-tier Gemini API quota reached. Please wait and retry later, or select a billing-enabled API key in Settings > Secrets for higher limits.'
+      'Your Gemini API key has reached its free-tier rate/daily limit across available models. Retry shortly or attach a billing-enabled key in .env / Settings > Secrets.'
     );
     return res.status(formatted.status).json({ error: formatted.error });
   }
